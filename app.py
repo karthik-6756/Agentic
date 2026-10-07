@@ -4,15 +4,13 @@ import requests
 import uvicorn
 
 from fastapi import FastAPI
+from pydantic import BaseModel, Field
+
 from langserve import add_routes
-
-from langchain_core.tools import tool
 from langchain_core.runnables import RunnableLambda
-
+from langchain_core.tools import tool
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain.agents import create_agent
-
-from pydantic import BaseModel, Field
 
 
 # ============================================================
@@ -21,57 +19,37 @@ from pydantic import BaseModel, Field
 
 @tool
 def search_movies(genre: str) -> str:
-    """
-    Search for Indian movies by genre.
-    """
+    """Search for Indian movies by genre."""
 
     movies = {
         "sci-fi": "Cargo, 2.0, Mr. India",
         "science fiction": "Cargo, 2.0, Mr. India",
-
         "comedy": "3 Idiots, Hera Pheri, Munna Bhai M.B.B.S.",
-
         "action": "RRR, Vikram, Baahubali",
-
         "thriller": "Drishyam, Ratsasan, Andhadhun",
-
         "romance": "Sita Ramam, Geetha Govindam, 96",
-
         "horror": "Tumbbad, Stree, Bhool Bhulaiyaa"
     }
 
-    genre = genre.lower().strip()
-
     return movies.get(
-        genre,
+        genre.lower().strip(),
         "No movies found for that genre."
     )
 
 
 @tool
 def change_to_f(temp_c: float) -> float:
-    """
-    Convert Celsius temperature to Fahrenheit.
-    """
+    """Convert Celsius temperature to Fahrenheit."""
 
     return round((temp_c * 1.8) + 32, 2)
 
 
 @tool
 def get_weather(city: str) -> str:
-    """
-    Get current weather for a city using Open-Meteo.
-    """
+    """Get current temperature for a city."""
 
     try:
-
-        # ----------------------------------------------------
-        # STEP 1: Find city coordinates
-        # ----------------------------------------------------
-
-        geo_url = (
-            "https://geocoding-api.open-meteo.com/v1/search"
-        )
+        geo_url = "https://geocoding-api.open-meteo.com/v1/search"
 
         geo_params = {
             "name": city,
@@ -91,21 +69,14 @@ def get_weather(city: str) -> str:
         geo_data = geo_response.json()
 
         if "results" not in geo_data:
-            return f"Could not find the city: {city}"
+            return f"Could not find weather data for city: {city}"
 
         location = geo_data["results"][0]
 
         latitude = location["latitude"]
         longitude = location["longitude"]
-        resolved_city = location["name"]
 
-        # ----------------------------------------------------
-        # STEP 2: Get current weather
-        # ----------------------------------------------------
-
-        weather_url = (
-            "https://api.open-meteo.com/v1/forecast"
-        )
+        weather_url = "https://api.open-meteo.com/v1/forecast"
 
         weather_params = {
             "latitude": latitude,
@@ -122,12 +93,10 @@ def get_weather(city: str) -> str:
 
         weather_response.raise_for_status()
 
-        weather_data = weather_response.json()
-
-        current = weather_data["current"]
+        current = weather_response.json()["current"]
 
         result = {
-            "city": resolved_city,
+            "city": location["name"],
             "temperature_celsius": current["temperature_2m"],
             "weather_code": current["weather_code"]
         }
@@ -145,7 +114,7 @@ def get_weather(city: str) -> str:
 
 
 # ============================================================
-# 2. TOOL LIST
+# 2. TOOLS LIST
 # ============================================================
 
 tools = [
@@ -162,21 +131,20 @@ tools = [
 GOOGLE_API_KEY = os.environ.get("GOOGLE_API_KEY")
 
 if not GOOGLE_API_KEY:
-
     raise ValueError(
-        "GOOGLE_API_KEY is not set. "
-        "Please set your Google API key before starting the server."
+        "GOOGLE_API_KEY environment variable is not set."
     )
 
 
 # ============================================================
-# 4. MODEL
+# 4. GOOGLE MODEL
 # ============================================================
 
 llm = ChatGoogleGenerativeAI(
-    model="gemma-4-31b-it",
-    api_key=GOOGLE_API_KEY,
-    temperature=0
+    model="gemini-2.5-flash",
+    google_api_key=GOOGLE_API_KEY,
+    temperature=0,
+    max_retries=2
 )
 
 
@@ -185,39 +153,30 @@ llm = ChatGoogleGenerativeAI(
 # ============================================================
 
 agent = create_agent(
-
     model=llm,
-
     tools=tools,
-
     system_prompt="""
 You are a specialized Indian Weather and Cinema assistant.
 
-You are allowed to answer questions related to:
+You are allowed to answer only:
 
 1. Indian weather
 2. Indian movies and cinema
+3. Celsius to Fahrenheit conversion related to weather
 
-You have access to these tools:
+Rules:
 
-- get_weather
-- search_movies
-- change_to_f
+- If the user asks about current weather, ALWAYS use get_weather.
+- If the user asks for Indian movies by genre, use search_movies.
+- If the user asks to convert Celsius to Fahrenheit, use change_to_f.
+- Never guess current weather.
+- After using a tool, provide one clear final answer.
+- Do not expose tool calls.
+- Do not expose internal reasoning.
+- Do not mention LangGraph.
+- Do not mention internal agent execution.
 
-IMPORTANT RULES:
-
-1. When the user asks about weather, use get_weather.
-2. When the user asks for Indian movies by genre, use search_movies.
-3. When the user asks to convert Celsius to Fahrenheit, use change_to_f.
-4. Use the appropriate tool instead of guessing current weather information.
-5. After using a tool, give the user a simple final answer.
-6. Never expose tool calls.
-7. Never expose intermediate steps.
-8. Never expose internal reasoning.
-9. Never mention LangGraph.
-10. Never mention the agent execution process.
-
-For questions completely outside Indian weather and cinema, respond exactly:
+For questions outside these topics, respond exactly:
 
 I am not authorized to answer questions outside of Indian weather and cinema.
 """
@@ -225,41 +184,28 @@ I am not authorized to answer questions outside of Indian weather and cinema.
 
 
 # ============================================================
-# 6. LANGSERVE INPUT
+# 6. INPUT MODEL
 # ============================================================
 
 class AgentInput(BaseModel):
-
     input: str = Field(
-        description="Your message to the Indian Weather and Cinema Agent"
+        description="Your message to the agent"
     )
 
 
 # ============================================================
-# 7. EXTRACT FINAL ANSWER
+# 7. EXTRACT FINAL RESPONSE
 # ============================================================
 
-def extract_final_answer(result):
-    """
-    Extract ONLY the final assistant message
-    from the completed agent result.
-    """
+def extract_final_response(result):
 
     if not isinstance(result, dict):
-
         return str(result)
-
 
     messages = result.get("messages", [])
 
     if not messages:
-
-        return "No response was generated."
-
-
-    # --------------------------------------------------------
-    # Search backwards for the final AI response.
-    # --------------------------------------------------------
+        return "No response generated."
 
     for message in reversed(messages):
 
@@ -269,121 +215,64 @@ def extract_final_answer(result):
             ""
         )
 
-        if message_type == "ai":
+        if message_type != "ai":
+            continue
 
-            content = getattr(
-                message,
-                "content",
-                ""
-            )
-
-            # Normal string content
-            if isinstance(content, str):
-
-                return content.strip()
-
-
-            # Gemini can sometimes return content blocks
-            if isinstance(content, list):
-
-                text_parts = []
-
-                for block in content:
-
-                    if isinstance(block, dict):
-
-                        if "text" in block:
-
-                            text_parts.append(
-                                str(block["text"])
-                            )
-
-                    elif isinstance(block, str):
-
-                        text_parts.append(block)
-
-
-                answer = "\n".join(
-                    text_parts
-                ).strip()
-
-
-                if answer:
-
-                    return answer
-
-
-    # --------------------------------------------------------
-    # Fallback
-    # --------------------------------------------------------
-
-    last_message = messages[-1]
-
-    content = getattr(
-        last_message,
-        "content",
-        None
-    )
-
-    if content:
-
-        return str(content)
-
-
-    return "No final response was generated."
-
-
-# ============================================================
-# 8. RUN COMPLETE AGENT
-# ============================================================
-
-def run_agent_once(data):
-    """
-    IMPORTANT:
-
-    The entire agent execution happens INSIDE this function.
-
-    LangServe receives only the final returned string.
-
-    Therefore the Playground should not display the
-    intermediate LangGraph/tool execution as the result.
-    """
-
-    # --------------------------------------------------------
-    # Get user input
-    # --------------------------------------------------------
-
-    if isinstance(data, dict):
-
-        user_input = data.get(
-            "input",
+        content = getattr(
+            message,
+            "content",
             ""
         )
 
-    elif hasattr(data, "input"):
+        if isinstance(content, str):
+            return content.strip()
 
-        user_input = data.input
+        if isinstance(content, list):
+
+            parts = []
+
+            for item in content:
+
+                if isinstance(item, dict):
+
+                    if "text" in item:
+                        parts.append(
+                            str(item["text"])
+                        )
+
+                elif isinstance(item, str):
+
+                    parts.append(item)
+
+            final_text = "\n".join(parts).strip()
+
+            if final_text:
+                return final_text
+
+    return "No final response generated."
+
+
+# ============================================================
+# 8. RUN AGENT COMPLETELY
+# ============================================================
+
+def run_agent(input_data):
+
+    if isinstance(input_data, dict):
+        user_input = input_data.get("input", "")
+
+    elif isinstance(input_data, AgentInput):
+        user_input = input_data.input
 
     else:
+        user_input = str(input_data)
 
-        user_input = str(data)
-
-
-    user_input = str(
-        user_input
-    ).strip()
-
+    user_input = user_input.strip()
 
     if not user_input:
-
         return "Please enter a question."
 
-
     try:
-
-        # ----------------------------------------------------
-        # RUN THE COMPLETE AGENT
-        # ----------------------------------------------------
 
         result = agent.invoke(
             {
@@ -396,18 +285,7 @@ def run_agent_once(data):
             }
         )
 
-
-        # ----------------------------------------------------
-        # RETURN ONLY FINAL RESPONSE
-        # ----------------------------------------------------
-
-        final_answer = extract_final_answer(
-            result
-        )
-
-
-        return final_answer
-
+        return extract_final_response(result)
 
     except Exception as e:
 
@@ -415,15 +293,11 @@ def run_agent_once(data):
 
 
 # ============================================================
-# 9. WRAP AS RUNNABLE
+# 9. CREATE RUNNABLE
 # ============================================================
 
 agent_runnable = (
-
-    RunnableLambda(
-        run_agent_once
-    )
-
+    RunnableLambda(run_agent)
     .with_types(
         input_type=AgentInput,
         output_type=str
@@ -436,29 +310,24 @@ agent_runnable = (
 # ============================================================
 
 app = FastAPI(
-    title="Indian Weather & Cinema Agent API",
-    version="1.0.0"
+    title="Indian Weather & Cinema Agent API"
 )
 
 
 # ============================================================
-# 11. LANGSERVE ROUTE
+# 11. LANGSERVE PLAYGROUND
 # ============================================================
 
 add_routes(
-
     app,
-
     agent_runnable,
-
     path="/agent",
-
     playground_type="default"
 )
 
 
 # ============================================================
-# 12. ROOT ENDPOINT
+# 12. HEALTH CHECK
 # ============================================================
 
 @app.get("/")
@@ -468,6 +337,14 @@ def home():
         "status": "running",
         "message": "Indian Weather & Cinema Agent API",
         "playground": "/agent/playground/"
+    }
+
+
+@app.get("/health")
+def health():
+
+    return {
+        "status": "ok"
     }
 
 
@@ -482,14 +359,6 @@ if __name__ == "__main__":
             "PORT",
             8000
         )
-    )
-
-    print(
-        f"Starting server on port {port}..."
-    )
-
-    print(
-        f"Playground: http://localhost:{port}/agent/playground/"
     )
 
     uvicorn.run(
