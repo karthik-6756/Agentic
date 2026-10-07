@@ -248,7 +248,14 @@ add_routes(
     path="/agent",
     playground_type="default"
 )
+@app.get("/test-gemini")
+def test_gemini():
+    response = llm.invoke("Say exactly: Gemini is working")
 
+    return {
+        "status": "success",
+        "response": response.content
+    }
 
 # =========================================================
 # 7. RUN SERVER
