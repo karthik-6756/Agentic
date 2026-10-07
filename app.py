@@ -35,6 +35,7 @@ def search_movies(genre: str) -> str:
 @tool
 def change__to_f(temp_c: float) -> float:
     """Convert Celsius temperature to Fahrenheit."""
+
     return temp_c * 1.8 + 32
 
 
@@ -56,6 +57,7 @@ def get_weather(city: str) -> str:
         )
 
         geo_response.raise_for_status()
+
         geo_data = geo_response.json()
 
         if "results" not in geo_data:
@@ -178,7 +180,6 @@ def extract_text_response(result):
     if not messages:
         return "No response received from the agent."
 
-    # Find the last AI response
     for message in reversed(messages):
 
         content = getattr(message, "content", None)
@@ -213,7 +214,11 @@ def extract_text_response(result):
 # =========================================================
 
 def run_agent(x):
-    user_input = x["input"] if isinstance(x, dict) else x.input
+
+    if isinstance(x, dict):
+        user_input = x.get("input", "")
+    else:
+        user_input = x.input
 
     result = agent.invoke({
         "messages": [
@@ -234,6 +239,7 @@ formatted_agent_chain = RunnableLambda(
     output_type=str
 )
 
+
 # =========================================================
 # 6. FASTAPI
 # =========================================================
@@ -244,15 +250,26 @@ app = FastAPI(
 )
 
 
+# =========================================================
+# 6.1 HOME
+# =========================================================
+
 @app.get("/")
 def home():
+
     return {
         "status": "online",
         "message": "Indian Weather & Cinema Agent is running",
         "playground": "/agent/playground/",
-        "docs": "/docs"
+        "docs": "/docs",
+        "gemini_test": "/test-gemini",
+        "agent_test": "/test-agent"
     }
 
+
+# =========================================================
+# 6.2 LANGSERVE
+# =========================================================
 
 add_routes(
     app,
@@ -260,16 +277,32 @@ add_routes(
     path="/agent",
     playground_type="default"
 )
+
+
+# =========================================================
+# 6.3 TEST GEMINI
+# =========================================================
+
 @app.get("/test-gemini")
 def test_gemini():
-    response = llm.invoke("Say exactly: Gemini is working")
+
+    response = llm.invoke(
+        "Say exactly: Gemini is working"
+    )
 
     return {
         "status": "success",
         "response": response.content
     }
-    @app.get("/test-agent")
+
+
+# =========================================================
+# 6.4 TEST AGENT
+# =========================================================
+
+@app.get("/test-agent")
 def test_agent():
+
     result = agent.invoke({
         "messages": [
             {
@@ -283,6 +316,7 @@ def test_agent():
         "status": "success",
         "result": result
     }
+
 
 # =========================================================
 # 7. RUN SERVER
