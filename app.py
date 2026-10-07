@@ -2,6 +2,7 @@ import os
 import json
 import requests
 import uvicorn
+import time
 
 from fastapi import FastAPI
 from pydantic import BaseModel, Field
@@ -144,7 +145,7 @@ llm = ChatGoogleGenerativeAI(
     model="gemini-3.8-flash",
     google_api_key=GOOGLE_API_KEY,
     temperature=0,
-    max_retries=2
+    max_retries=5
 )
 
 
@@ -272,26 +273,38 @@ def run_agent(input_data):
     if not user_input:
         return "Please enter a question."
 
-    try:
+    last_error = None
 
-        result = agent.invoke(
-            {
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": user_input
-                    }
-                ]
-            }
-        )
+    for attempt in range(3):
 
-        return extract_final_response(result)
+        try:
 
-    except Exception as e:
+            result = agent.invoke(
+                {
+                    "messages": [
+                        {
+                            "role": "user",
+                            "content": user_input
+                        }
+                    ]
+                }
+            )
 
-        return f"Agent error: {str(e)}"
+            return extract_final_response(result)
 
+        except Exception as e:
 
+            last_error = str(e)
+
+            if "503" in last_error or "UNAVAILABLE" in last_error:
+
+                if attempt < 2:
+                    time.sleep(3)
+                    continue
+
+            return f"Agent error: {last_error}"
+
+    return f"Agent error: {last_error}"
 # ============================================================
 # 9. CREATE RUNNABLE
 # ============================================================
