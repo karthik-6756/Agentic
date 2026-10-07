@@ -212,15 +212,27 @@ def extract_text_response(result):
 # 5. LANGSERVE CHAIN
 # =========================================================
 
-formatted_agent_chain = (
-    RunnableLambda(format_for_agent)
-    | agent
-    | RunnableLambda(extract_text_response)
+def run_agent(x):
+    user_input = x["input"] if isinstance(x, dict) else x.input
+
+    result = agent.invoke({
+        "messages": [
+            {
+                "role": "user",
+                "content": user_input
+            }
+        ]
+    })
+
+    return extract_text_response(result)
+
+
+formatted_agent_chain = RunnableLambda(
+    run_agent
 ).with_types(
     input_type=AgentInput,
     output_type=str
 )
-
 
 # =========================================================
 # 6. FASTAPI
