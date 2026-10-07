@@ -268,6 +268,21 @@ def test_gemini():
         "status": "success",
         "response": response.content
     }
+    @app.get("/test-agent")
+def test_agent():
+    result = agent.invoke({
+        "messages": [
+            {
+                "role": "user",
+                "content": "Suggest some Indian sci-fi movies"
+            }
+        ]
+    })
+
+    return {
+        "status": "success",
+        "result": result
+    }
 
 # =========================================================
 # 7. RUN SERVER
